@@ -3,8 +3,8 @@
  * oe6rke, 2021-04
  * 
  * oszi0 2.5 MHz  (feedback)
- * oszi1 125 MHz  (HF Mixer)
- * oszi2 28.8 MHz (RTL Dongle Oszi)
+ * oszi1  51 MHz  (SX1280 Referenztakt - GPS-diszipliniert)
+ * oszi2  --      (frei)
  * 
  *  si5351 + nano + txco 25.00 (ppm2.5) + GPS NEO7M 
  *  
@@ -56,8 +56,7 @@ unsigned long XtalFreq = 100000000;
 unsigned long XtalFreq_old = 100000000;
 
 //freqs
-unsigned long Freq1 = 12500000; // 125 MHz
-unsigned long Freq2 = 2880000;  // 28.8 MHz
+unsigned long Freq1 = 5100000;  // 51 MHz (SX1280 Referenztakt)
 
 long stab;
 long correction = 0;
@@ -124,9 +123,7 @@ void setup()
   si5351.set_freq(250000000ULL, SI5351_CLK0); //CLK0 = 2.5MHz
 
   si5351.set_ms_source(SI5351_CLK1, SI5351_PLLB);
-  // CHOSE YOUR FREQUENCY HERE
-  si5351.set_freq(12500000000ULL, SI5351_CLK1);
-  //si5351.set_freq(2880000000ULL, SI5351_CLK1);
+  si5351.set_freq(5100000000ULL, SI5351_CLK1);   // CLK1 = 51 MHz fuer SX1280
    
   si5351.update_status();
 
@@ -395,14 +392,11 @@ void sat_on_oled()
 //*********************************************************************************
 void freq_on_oled() {
   time_enable = false;
-  oled.setCursor(16, 6);
-  oled.print(Freq1);
-  oled.print(" kHz   ");
-  
-  oled.setCursor(16, 7);
-  oled.print(Freq2);
-  oled.print(" kHz   ");
-
+  oled.setCursor(0, 6);
+  oled.print("CLK1: 51MHz SX1280  ");
+  oled.setCursor(0, 7);
+  oled.print("GPS locked: ");
+  oled.print(fixed ? "YES" : "NO ");
 }
 //********************************************************************
 //             NEW frequency  --- NOT USED, because fixed
