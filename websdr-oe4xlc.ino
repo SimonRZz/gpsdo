@@ -105,7 +105,8 @@ void setup()
   //init display
   Wire.begin();
   Wire.setClock(400000L);
-  oled.begin(&Adafruit128x64, I2C_ADDRESS);
+  //oled.begin(&Adafruit128x64, I2C_ADDRESS);  // 0.96" SSD1306
+  oled.begin(&SH1106_128x64, I2C_ADDRESS);    // 1.3" SH1106 (2.7x2cm)
   oled.setFont(System5x7); // Auswahl der Schriftart
   oled.clear();
 
