@@ -56,7 +56,7 @@ unsigned long XtalFreq = 100000000;
 unsigned long XtalFreq_old = 100000000;
 
 //freqs
-unsigned long Freq1 = 52000000;  // 52 MHz (SX1280 Referenztakt)
+unsigned long Freq1 = 51000000;  // 51 MHz (SX1280 Referenztakt)
 unsigned long Freq2 = 28800000;  // 28.8 MHz
 
 long stab;
@@ -128,7 +128,7 @@ void setup()
   si5351.set_freq(250000000ULL, SI5351_CLK0); //CLK0 = 2.5MHz
 
   si5351.set_ms_source(SI5351_CLK1, SI5351_PLLB);
-  si5351.set_freq(5200000000ULL, SI5351_CLK1);   // CLK1 = 52 MHz fuer SX1280
+  si5351.set_freq(5100000000ULL, SI5351_CLK1);   // CLK1 = 51 MHz fuer SX1280
   si5351.set_freq(2880000000ULL, SI5351_CLK2);   // CLK2 = 28.8 MHz
 
   si5351.update_status();
