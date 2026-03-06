@@ -421,9 +421,12 @@ void stab_on_serial() {
     Serial.println(F("Pos:  no fix"));
   }
 
-  Serial.print(F("Corr: "));
+  Serial.print(F("Err:  "));
   Serial.print(stab_float);
   Serial.println(F(" Hz"));
+
+  Serial.print(F("Corr: "));
+  Serial.println(correction);
 
   Serial.print(F("Lock: "));
   Serial.println(fixed ? F("YES") : F("NO"));
