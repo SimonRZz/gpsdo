@@ -90,6 +90,11 @@ volatile bool time_update_needed = false;
 volatile bool tx_trigger = false;
 volatile uint8_t tx_second_snapshot = 0;
 
+// FT8 Konfiguration:
+// true  = gerade Perioden (0s, 30s pro Minute) – typisch für CQ-rufende Station
+// false = ungerade Perioden (15s, 45s pro Minute) – typisch für antwortende Station
+bool ft8_tx_even = true;
+
 SoftwareSerial gpsSerial(11, 10); // RX=D11, TX=D10. on RX comes GPS Serial in
 
 
@@ -216,7 +221,8 @@ void loop()
     start_ft8_transmission();
   }
 
-  bool near_tx_boundary = (second % 15 >= 14) || (second % 15 == 0);
+  // 1 Sekunde Vorlauf vor jedem TX-Fensterstart: keine blockierenden Display-Updates
+  bool near_tx_boundary = (second % 15 == 14);
 
   if (tcount2 != tcount) {
     tcount2 = tcount;
@@ -324,9 +330,14 @@ void PPSinterrupt()
     if (stab_count < 10) oled.print(" ");
     oled.print(stab_count);
   }
+  // FT8: tx_trigger nur auf UNSERER Periode auslösen
   if (second % 15 == 0) {
-    tx_trigger = true;
-    tx_second_snapshot = second;
+    bool our_period = ft8_tx_even ? (second == 0 || second == 30)
+                                  : (second == 15 || second == 45);
+    if (our_period) {
+      tx_trigger = true;
+      tx_second_snapshot = second;
+    }
   }
 }
 //*******************************************************************************
@@ -348,11 +359,15 @@ void stab_on_oled() {
   time_enable = false;
   stab = XtalFreq - 100000000;
   stab = stab * 10 ;
+  // Verstärkung bewusst niedrig halten (alle Bereiche /4):
+  // Verstärkung 1.0 (stab ungeteilt) führt bei TCXO-Thermodrift zu
+  // anhaltenden Überschwingern. Mit /4 konvergiert die Schleife
+  // zuverlässig, auch wenn der TCXO noch driftet.
   if (stab > 100 || stab < -100) {
-    correction = correction + stab;
+    correction = correction + stab / 4;
   }
   else if (stab > 20 || stab < -20) {
-    correction = correction + stab / 2;
+    correction = correction + stab / 4;
   }
   else correction = correction + stab / 4;
   pomocna = (10000 / (Freq1 / 1000000));
@@ -472,12 +487,17 @@ void update_si5351a()
   si5351.set_freq(Freq1 * SI5351_FREQ_MULT, SI5351_CLK1);
 }
 //********************************************************************
-//             TX window guard: returns true during FT8 TX window
+//             TX window guard: true NUR während UNSERER FT8-TX-Periode
+//             Gerade:   Sekunden  0-12 und 30-42 jeder Minute
+//             Ungerade: Sekunden 15-27 und 45-57 jeder Minute
+//             Nur in diesen Fenstern darf CLK1 NICHT verändert werden.
 //********************************************************************
 bool is_in_tx_window() {
-  int s = second % 15;
-  bool ft8_window = (s >= 0 && s < 13);
-  return ft8_window;
+  if (ft8_tx_even) {
+    return (second >= 0 && second < 13) || (second >= 30 && second < 43);
+  } else {
+    return (second >= 15 && second < 28) || (second >= 45 && second < 58);
+  }
 }
 //********************************************************************
 //             NEW frequency correction
@@ -504,13 +524,20 @@ static void GPSproces(unsigned long ms)
 }
 //*********************************************************************
 
-// TX is triggered directly from the 1PPS interrupt edge (<1us latency).
-// Symbol frequency changes must only modify the MultiSynth divider,
-// never reprogram the PLL VCO, to avoid inter-symbol phase glitches.
-// Loop latency at trigger time is minimised because near_tx_boundary
-// suppresses all blocking operations in the preceding ~1 second.
+// FT8-Sendefenster gestartet.
+// Der SX1280 sendet FT8 auf 2.4 GHz eigenständig; CLK1 (51 MHz) ist sein
+// Referenztakt. Während des TX-Fensters (is_in_tx_window() == true) wird
+// CLK1 durch correct_si5351a() NICHT verändert. Korrekturen werden erst
+// nach Ende des TX-Fensters (ab Sekunde 13/28/43/58) angewendet.
 void start_ft8_transmission() {
-  // TODO: implement FT8/FT4 symbol output via Si5351 CLK1
-  // Use si5351.set_freq() on CLK1 only (MS-only changes, keep PLL fixed)
-  // to avoid phase glitches between symbols
+  // Status auf Display
+  oled.setCursor(0, 4);
+  oled.print("FT8 TX         ");
+
+  // Status auf Serial
+  char buf[40];
+  sprintf(buf, "FT8 TX start: %02d:%02d:%02d UTC (%s Periode)",
+    hour, minute, tx_second_snapshot,
+    ft8_tx_even ? "gerade" : "ungerade");
+  Serial.println(buf);
 }
