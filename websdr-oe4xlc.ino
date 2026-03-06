@@ -359,12 +359,20 @@ void stab_on_oled() {
   time_enable = false;
   stab = XtalFreq - 100000000;
   stab = stab * 10 ;
-  // Verstärkung bewusst niedrig halten (alle Bereiche /4):
-  // Verstärkung 1.0 (stab ungeteilt) führt bei TCXO-Thermodrift zu
-  // anhaltenden Überschwingern. Mit /4 konvergiert die Schleife
-  // zuverlässig, auch wenn der TCXO noch driftet.
+  // Verstärkungsstrategie (Stabilitätsnachweis aus Messdaten):
+  //   K = 0.060 Hz/Einheit (empirisch: 113084 Hz / 1884217 Einheiten)
+  //   Gain /1 → K×α = 1.176 > 1  → DIVERGENT (beobachtet: +11→-9→-5→+21 Hz)
+  //   Gain /2 → K×α = 0.588 < 1  → STABIL, ~15 Zyklen (~10 min) bis Lock
+  //   Gain /4 → K×α = 0.294 < 1  → STABIL, ~37 Zyklen (~25 min) bis Lock
+  //
+  // Große Fehler (|stab|>100, entspricht >5 Hz bei 51 MHz):
+  //   Gain /2 für schnellere Erfassung nach Kaltstart oder Drift.
+  //   Bleibt stabil (K×α=0.588), kein Überschwingen.
+  //
+  // Kleine Fehler (nahe Sollwert):
+  //   Gain /4 für ruhiges Einrasten, unempfindlich gegen TCXO-Thermorauschen.
   if (stab > 100 || stab < -100) {
-    correction = correction + stab / 4;
+    correction = correction + stab / 2;
   }
   else if (stab > 20 || stab < -20) {
     correction = correction + stab / 4;
