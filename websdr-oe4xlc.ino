@@ -30,6 +30,7 @@
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
 #define I2C_ADDRESS 0x3C
+#define VERSION "2026-03-06"
 
 
 // The TinyGPS++ object
@@ -100,7 +101,7 @@ void setup()
   Serial.begin(9600);
   gpsSerial.begin(9600);
 
-  Serial.println("GPSDO RTL coded by OE6RKE Version 2021-04-28");
+  Serial.println("GPSDO RTL coded by OE6RKE Version " VERSION);
 
   //init display
   Wire.begin();
@@ -142,7 +143,7 @@ void setup()
   oled.setCursor(0, 0);
   oled.print("coded by OE6RKE");
   oled.setCursor(0, 2);
-  oled.print("Version 2021-04-28");
+  oled.print("Version " VERSION);
   digitalWrite(LED, HIGH);
   delay(4000);
   digitalWrite(LED, LOW);
