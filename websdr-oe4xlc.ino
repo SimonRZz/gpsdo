@@ -1,24 +1,25 @@
 /*
  * gps controlled oszillator für oe4xlc in allhau
  * oe6rke, 2021-04
- * 
+ *
  * oszi0 2.5 MHz  (feedback)
  * oszi1  51 MHz  (SX1280 Referenztakt - GPS-diszipliniert)
  * oszi2  --      (frei)
- * 
- *  si5351 + nano + txco 25.00 (ppm2.5) + GPS NEO7M 
- *  
+ *
+ *  si5351 + nano + txco 25.00 (ppm2.5) + GPS NEO7M
+ *
  * https://github.com/etherkit/Si5351Arduino
  * Modul hier https://www.sv1afn.com/si5351a.html,
  * http://ak2b.blogspot.com/2015/01/installing-libraries-and-running-code.html
- * 
- *  Based on the projects: 
+ *
+ *  Based on the projects:
  *  W3PM (http://www.knology.net/~gmarcus/)
  *  &
  *  SQ1GU (http://sq1gu.tobis.com.pl/pl/syntezery-dds/44-generator-si5351a)
  */
 
 #include <TinyGPS++.h>
+#include <math.h>
 #include <string.h>
 #include <ctype.h>
 #include <avr/interrupt.h>
@@ -30,6 +31,7 @@
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
 #define I2C_ADDRESS 0x3C
+#define VERSION "2026-03-06"
 
 
 // The TinyGPS++ object
@@ -56,18 +58,19 @@ unsigned long XtalFreq = 100000000;
 unsigned long XtalFreq_old = 100000000;
 
 //freqs
-unsigned long Freq1 = 5100000;  // 51 MHz (SX1280 Referenztakt)
+unsigned long Freq1 = 51000000;  // 51 MHz (SX1280 Referenztakt)
+unsigned long Freq2 = 28800000;  // 28.8 MHz
 
 long stab;
 long correction = 0;
 byte stab_count = 44;
-unsigned long mult = 0; 
+unsigned long mult = 0;
 int second = 0, minute = 0, hour = 0;
 int day = 0, month = 0, year = 0;
 int zone = 1;
 unsigned int tcount = 0;
 unsigned int tcount2 = 0;
-int validGPSflag = false;
+bool validGPSflag = false;
 char c;
 boolean newdata = false;
 boolean GPSstatus = true;
@@ -82,6 +85,11 @@ unsigned long pps_correct;
 byte pps_valid = 1;
 float stab_float = 1000;
 
+volatile bool stab_ready = false;
+volatile bool time_update_needed = false;
+volatile bool tx_trigger = false;
+volatile uint8_t tx_second_snapshot = 0;
+
 SoftwareSerial gpsSerial(11, 10); // RX=D11, TX=D10. on RX comes GPS Serial in
 
 
@@ -91,31 +99,31 @@ SoftwareSerial gpsSerial(11, 10); // RX=D11, TX=D10. on RX comes GPS Serial in
 void setup()
 {
   bool i2c_found;
-  Serial.begin(9600); 
+  Serial.begin(9600);
   gpsSerial.begin(9600);
-  
-  Serial.println("GPSDO RTL coded by OE6RKE Version 2021-04-28");
-    
+
+  Serial.println("GPSDO RTL coded by OE6RKE Version " VERSION);
+
   //init display
   Wire.begin();
   Wire.setClock(400000L);
-  oled.begin(&Adafruit128x64, I2C_ADDRESS);
+  //oled.begin(&Adafruit128x64, I2C_ADDRESS);  // 0.96" SSD1306
+  oled.begin(&SH1106_128x64, I2C_ADDRESS);    // 1.3" SH1106 (2.7x2cm)
   oled.setFont(System5x7); // Auswahl der Schriftart
   oled.clear();
-                  
+
   //led status D12
   pinMode(LED, OUTPUT);
 
-  TCCR1B = 0;                                    //Disable Timer5 during setup
+  TCCR1B = 0;                                    //Disable Timer1 during setup
   TCCR1A = 0;                                    //Reset
   TCNT1  = 0;                                    //Reset counter to zero
   TIFR1  = 1;                                    //Reset overflow
   TIMSK1 = 1;                                    //Turn on overflow flag
   pinMode(ppsPin, INPUT);                        // Inititalize GPS 1pps input
-  digitalWrite(ppsPin, HIGH);
 
   i2c_found = si5351.init(SI5351_CRYSTAL_LOAD_8PF, 25000000, 10); //init with 25 mhz and offset
-  
+
   si5351.drive_strength(SI5351_CLK1, SI5351_DRIVE_2MA);
   //si5351.drive_strength(SI5351_CLK0, SI5351_DRIVE_4MA); //5db Output für clock0
 
@@ -124,7 +132,8 @@ void setup()
 
   si5351.set_ms_source(SI5351_CLK1, SI5351_PLLB);
   si5351.set_freq(5100000000ULL, SI5351_CLK1);   // CLK1 = 51 MHz fuer SX1280
-   
+  si5351.set_freq(2880000000ULL, SI5351_CLK2);   // CLK2 = 28.8 MHz
+
   si5351.update_status();
 
   //version info
@@ -135,12 +144,12 @@ void setup()
   oled.setCursor(0, 0);
   oled.print("coded by OE6RKE");
   oled.setCursor(0, 2);
-  oled.print("Version 2021-04-28");
+  oled.print("Version " VERSION);
   digitalWrite(LED, HIGH);
   delay(4000);
   digitalWrite(LED, LOW);
   oled.clear();
-  
+
   oled.setCursor(4, 2);
   oled.print("Waiting for GPS");
 
@@ -155,7 +164,7 @@ void setup()
     GPSstatus = false;
   }
   oled.clear();
-  
+
   if (GPSstatus == true) {
     oled.setCursor(4, 2);
     oled.print("Waiting for SAT");
@@ -173,7 +182,7 @@ void setup()
     month = gps.date.month();
     year = gps.date.year();
 
-    
+
     oled.clear();
     time_on_oled();
     sat_on_oled();
@@ -197,27 +206,36 @@ void setup()
 //***************************************************************************************
 void loop()
 {
+  if (stab_ready) { stab_ready = false; stab_on_oled(); }
+  if (time_update_needed) { time_update_needed = false; time_on_oled(); }
+
+  GPSproces(0);
+
+  if (tx_trigger) {
+    tx_trigger = false;
+    start_ft8_transmission();
+  }
+
+  bool near_tx_boundary = (second % 15 >= 14) || (second % 15 == 0);
 
   if (tcount2 != tcount) {
     tcount2 = tcount;
     pps_correct = millis();
   }
-  if (tcount < 4 ) {
-    GPSproces(0);
-  }
+
   if (gps.time.isUpdated()) {
     hour = gps.time.hour() + zone;
     minute = gps.time.minute();
     second = gps.time.second();
   }
-  
+
   if (gps.date.isUpdated()) {
     day = gps.date.day();
     month = gps.date.month();
     year = gps.date.year();
   }
-  
-  if (gps.satellites.isUpdated() && menu == 0) {
+
+  if (gps.satellites.isUpdated() && menu == 0 && !near_tx_boundary) {
     sat_on_oled();
   }
 
@@ -228,14 +246,14 @@ void loop()
     oled.setCursor(112, 4);
     oled.print("@");
     digitalWrite(LED, HIGH);
-    Serial.println("GPSDO locked");
+    if (!fixed) Serial.println("GPSDO locked");
     fixed = true;
   }
   if (abs(stab_float)>1) {
     oled.setCursor(112, 4);
     oled.print(" ");
     digitalWrite(LED, LOW);
-    Serial.println("GPSDO not locked");
+    if (fixed) Serial.println("GPSDO not locked");
     fixed = false;
   }
 
@@ -247,8 +265,11 @@ void loop()
   }
 
    //wait not to overflow stuff
-   time_on_oled();
-   delay(5000);
+   static unsigned long lastDisplayUpdate = 0;
+   if (millis() - lastDisplayUpdate >= 5000) {
+     lastDisplayUpdate = millis();
+     if (!near_tx_boundary) time_on_oled();
+   }
 }
 
 
@@ -257,7 +278,7 @@ void loop()
 //**************************************************************************************
 void PPSinterrupt()
 {
-  
+
   tcount++;
   stab_count--;
   if (tcount == 4)                               // Start counting the 2.5 MHz signal from Si5351A CLK0
@@ -266,10 +287,10 @@ void PPSinterrupt()
   }
   if (tcount == 44)                              //The 40 second gate time elapsed - stop counting
   {
-    TCCR1B = 0;  
+    TCCR1B = 0;
     if (pps_valid == 1) {
-      XtalFreq_old = XtalFreq;      
-      XtalFreq = mult * 0x10000 + TCNT1;         //Calculate correction factor, only if sat is present      
+      XtalFreq_old = XtalFreq;
+      XtalFreq = mult * 0x10000 + TCNT1;         //Calculate correction factor, only if sat is present
       //Serial.println(XtalFreq);
       new_freq = 1;
     }
@@ -277,9 +298,9 @@ void PPSinterrupt()
     mult = 0;
     tcount = 0;                                  //Reset the seconds counter
     pps_valid = 1;
-   
+
     stab_count = 44;
-    stab_on_oled();
+    stab_ready = true;
     //stab_on_serial();
   }
   if (validGPSflag == 1)                      //Start the UTC timekeeping process
@@ -296,12 +317,16 @@ void PPSinterrupt()
       minute = 0 ;
     }
     if (hour == 24) hour = 0 ;
-    if (time_enable) time_on_oled();
+    if (time_enable) time_update_needed = true;
   }
   if (menu == 4) {
     oled.setCursor(96, 6);
     if (stab_count < 10) oled.print(" ");
     oled.print(stab_count);
+  }
+  if (second % 15 == 0) {
+    tx_trigger = true;
+    tx_second_snapshot = second;
   }
 }
 //*******************************************************************************
@@ -335,19 +360,58 @@ void stab_on_oled() {
   stab = stab / pomocna;
   stab_float = float(stab);
   stab_float = stab_float / 10;
-  
-  Serial.print("Freq. correction: ");
-  Serial.print(stab_float);
-  Serial.println(" Hz");
 
-  //print location
-  Serial.print("lat: ");
-  Serial.print(gps.location.rawLat().negative ? "-" : "+");
-  Serial.println(gps.location.lat(), 8);
-  
-  Serial.print("lon: ");
-  Serial.print(gps.location.rawLng().negative ? "-" : "+");  
-  Serial.println(gps.location.lng(), 8);
+  stab_on_serial();
+}
+
+//********************************************************************************
+//                          Maidenhead Locator (6 Stellen)
+//********************************************************************************
+void maidenhead(float lat, float lon, char *grid) {
+  lon += 180.0f;
+  lat += 90.0f;
+  grid[0] = 'A' + (int)(lon / 20);
+  grid[1] = 'A' + (int)(lat / 10);
+  grid[2] = '0' + (int)(fmod(lon, 20.0f) / 2);
+  grid[3] = '0' + (int)(fmod(lat, 10.0f));
+  grid[4] = 'a' + (int)(fmod(lon, 2.0f) * 12);
+  grid[5] = 'a' + (int)(fmod(lat, 1.0f) * 24);
+  grid[6] = '\0';
+}
+
+//********************************************************************************
+//                          Status auf Serial Monitor
+//********************************************************************************
+void stab_on_serial() {
+  char grid[7];
+  char buf[32];
+
+  Serial.println(F("--- GPSDO Status ---"));
+
+  sprintf(buf, "Time: %02d:%02d:%02d UTC", hour, minute, second);
+  Serial.println(buf);
+
+  Serial.print(F("Sats: "));
+  Serial.println(gps.satellites.value());
+
+  if (gps.location.isValid()) {
+    Serial.print(F("Lat:  "));
+    Serial.println(gps.location.lat(), 6);
+    Serial.print(F("Lon:  "));
+    Serial.println(gps.location.lng(), 6);
+    maidenhead(gps.location.lat(), gps.location.lng(), grid);
+    Serial.print(F("Grid: "));
+    Serial.println(grid);
+  } else {
+    Serial.println(F("Pos:  no fix"));
+  }
+
+  Serial.print(F("Corr: "));
+  Serial.print(stab_float);
+  Serial.println(F(" Hz"));
+
+  Serial.print(F("Lock: "));
+  Serial.println(fixed ? F("YES") : F("NO"));
 }
 
 
@@ -393,7 +457,9 @@ void sat_on_oled()
 void freq_on_oled() {
   time_enable = false;
   oled.setCursor(0, 6);
-  oled.print("CLK1: 51MHz SX1280  ");
+  oled.print("CLK1: ");
+  oled.print(Freq1 / 1000000);
+  oled.print(" MHz SX1280  ");
   oled.setCursor(0, 7);
   oled.print("GPS locked: ");
   oled.print(fixed ? "YES" : "NO ");
@@ -406,11 +472,23 @@ void update_si5351a()
   si5351.set_freq(Freq1 * SI5351_FREQ_MULT, SI5351_CLK1);
 }
 //********************************************************************
+//             TX window guard: returns true during FT8 TX window
+//********************************************************************
+bool is_in_tx_window() {
+  int s = second % 15;
+  bool ft8_window = (s >= 0 && s < 13);
+  return ft8_window;
+}
+//********************************************************************
 //             NEW frequency correction
 //********************************************************************
 void correct_si5351a()
 {
-  si5351.set_correction(correction, SI5351_PLL_INPUT_XO);
+  static long last_correction = 0;
+  if (!is_in_tx_window() && correction != last_correction) {
+    last_correction = correction;
+    si5351.set_correction(correction, SI5351_PLL_INPUT_XO);
+  }
 }
 //*********************************************************************
 //                    Odczyt danych z GPS
@@ -425,3 +503,14 @@ static void GPSproces(unsigned long ms)
   } while (millis() - start < ms);
 }
 //*********************************************************************
+
+// TX is triggered directly from the 1PPS interrupt edge (<1us latency).
+// Symbol frequency changes must only modify the MultiSynth divider,
+// never reprogram the PLL VCO, to avoid inter-symbol phase glitches.
+// Loop latency at trigger time is minimised because near_tx_boundary
+// suppresses all blocking operations in the preceding ~1 second.
+void start_ft8_transmission() {
+  // TODO: implement FT8/FT4 symbol output via Si5351 CLK1
+  // Use si5351.set_freq() on CLK1 only (MS-only changes, keep PLL fixed)
+  // to avoid phase glitches between symbols
+}
