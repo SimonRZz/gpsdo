@@ -427,6 +427,24 @@ void stab_on_serial() {
 
   Serial.print(F("Lock: "));
   Serial.println(fixed ? F("YES") : F("NO"));
+
+  if (!fixed) {
+    Serial.println(F("Lock-Grund(e):"));
+    if (!validGPSflag)
+      Serial.println(F("  - kein gueltiger GPS-Fix"));
+    if (pps_valid == 0)
+      Serial.println(F("  - kein PPS-Signal (>1.2s)"));
+    if (abs(stab_float) > 1)  {
+      Serial.print(F("  - Freq.abw. "));
+      Serial.print(stab_float, 1);
+      Serial.println(F(" Hz (Schwelle: 1 Hz)"));
+    }
+    if (stab_count > 0 && stab_count < 44) {
+      Serial.print(F("  - Messung laeuft noch ("));
+      Serial.print(stab_count);
+      Serial.println(F("s verbleibend)"));
+    }
+  }
 }
 
 
