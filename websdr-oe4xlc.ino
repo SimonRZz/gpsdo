@@ -359,11 +359,15 @@ void stab_on_oled() {
   time_enable = false;
   stab = XtalFreq - 100000000;
   stab = stab * 10 ;
+  // Verstärkung bewusst niedrig halten (alle Bereiche /4):
+  // Verstärkung 1.0 (stab ungeteilt) führt bei TCXO-Thermodrift zu
+  // anhaltenden Überschwingern. Mit /4 konvergiert die Schleife
+  // zuverlässig, auch wenn der TCXO noch driftet.
   if (stab > 100 || stab < -100) {
-    correction = correction + stab;
+    correction = correction + stab / 4;
   }
   else if (stab > 20 || stab < -20) {
-    correction = correction + stab / 2;
+    correction = correction + stab / 4;
   }
   else correction = correction + stab / 4;
   pomocna = (10000 / (Freq1 / 1000000));
