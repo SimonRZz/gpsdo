@@ -245,14 +245,14 @@ void loop()
     oled.setCursor(112, 4);
     oled.print("@");
     digitalWrite(LED, HIGH);
-    Serial.println("GPSDO locked");
+    if (!fixed) Serial.println("GPSDO locked");
     fixed = true;
   }
   if (abs(stab_float)>1) {
     oled.setCursor(112, 4);
     oled.print(" ");
     digitalWrite(LED, LOW);
-    Serial.println("GPSDO not locked");
+    if (fixed) Serial.println("GPSDO not locked");
     fixed = false;
   }
 
