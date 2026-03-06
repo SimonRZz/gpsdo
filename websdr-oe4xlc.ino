@@ -19,6 +19,7 @@
  */
 
 #include <TinyGPS++.h>
+#include <math.h>
 #include <string.h>
 #include <ctype.h>
 #include <avr/interrupt.h>
@@ -360,18 +361,57 @@ void stab_on_oled() {
   stab_float = float(stab);
   stab_float = stab_float / 10;
 
-  Serial.print("Freq. correction: ");
+  stab_on_serial();
+}
+
+//********************************************************************************
+//                          Maidenhead Locator (6 Stellen)
+//********************************************************************************
+void maidenhead(float lat, float lon, char *grid) {
+  lon += 180.0f;
+  lat += 90.0f;
+  grid[0] = 'A' + (int)(lon / 20);
+  grid[1] = 'A' + (int)(lat / 10);
+  grid[2] = '0' + (int)(fmod(lon, 20.0f) / 2);
+  grid[3] = '0' + (int)(fmod(lat, 10.0f));
+  grid[4] = 'a' + (int)(fmod(lon, 2.0f) * 12);
+  grid[5] = 'a' + (int)(fmod(lat, 1.0f) * 24);
+  grid[6] = '\0';
+}
+
+//********************************************************************************
+//                          Status auf Serial Monitor
+//********************************************************************************
+void stab_on_serial() {
+  char grid[7];
+  char buf[32];
+
+  Serial.println(F("--- GPSDO Status ---"));
+
+  sprintf(buf, "Time: %02d:%02d:%02d UTC", hour, minute, second);
+  Serial.println(buf);
+
+  Serial.print(F("Sats: "));
+  Serial.println(gps.satellites.value());
+
+  if (gps.location.isValid()) {
+    Serial.print(F("Lat:  "));
+    Serial.println(gps.location.lat(), 6);
+    Serial.print(F("Lon:  "));
+    Serial.println(gps.location.lng(), 6);
+    maidenhead(gps.location.lat(), gps.location.lng(), grid);
+    Serial.print(F("Grid: "));
+    Serial.println(grid);
+  } else {
+    Serial.println(F("Pos:  no fix"));
+  }
+
+  Serial.print(F("Corr: "));
   Serial.print(stab_float);
-  Serial.println(" Hz");
+  Serial.println(F(" Hz"));
 
-  //print location
-  Serial.print("lat: ");
-  Serial.print(gps.location.rawLat().negative ? "-" : "+");
-  Serial.println(gps.location.lat(), 8);
-
-  Serial.print("lon: ");
-  Serial.print(gps.location.rawLng().negative ? "-" : "+");
-  Serial.println(gps.location.lng(), 8);
+  Serial.print(F("Lock: "));
+  Serial.println(fixed ? F("YES") : F("NO"));
 }
 
 
